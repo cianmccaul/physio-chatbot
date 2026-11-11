@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en-IE">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ clinic.name }} · chat demo</title>
+  <meta name="description" content="A demo chat assistant for a physiotherapy clinic: finds the right therapist for an injury, explains booking, and hands anything else to a person.">
+  <link rel="icon" href="{{ url_for('static', filename='logo.svg') }}" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="demo-note">Demo: a made-up clinic. Nothing you type is stored or sent.</div>
+
+  <header class="site-header">
+    <div class="wrap">
+      <span class="brand"><img src="{{ url_for('static', filename='logo.svg') }}" alt="" width="34" height="34">{{ clinic.name }}</span>
+      <a class="phone" href="tel:{{ clinic.phone | replace(' ', '') }}">{{ clinic.phone }}</a>
+    </div>
+  </header>
+
+  <main class="wrap hero">
+    <p class="eyebrow">Physiotherapy · Sports massage · Dublin 2</p>
+    <h1>Back to doing what you love.</h1>
+    <p class="lede">Not sure who to see? Ask our assistant: it'll point you to the right therapist and get you booked in.</p>
+    <button type="button" class="cta" onclick="openChat()">Chat with us</button>
+  </main>
+
+  <div id="chat-launcher">
+    <button type="button" id="chat-bubble-icon" onclick="openChat()" aria-label="Open chat">
+      <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>
+    </button>
+
+    <section id="chat-widget" class="hidden" aria-label="Chat with {{ clinic.name }}">
+      <div id="chat-header">
+        <span><strong>{{ clinic.name }}</strong><small>Usually replies in a few seconds</small></span>
+        <button type="button" id="close-chat-btn" onclick="closeChat()" aria-label="Close chat">×</button>
+      </div>
+      <div id="chat-body" role="log" aria-live="polite"></div>
+      <div id="menu">
+        <button type="button" onclick="askQuestion('injury', this.innerText)">Who's best for my injury?</button>
+        <button type="button" onclick="askQuestion('book', this.innerText)">I'd like to book an appointment</button>
+        <button type="button" onclick="askQuestion('contact', this.innerText)">How do I contact you?</button>
+      </div>
+      <form id="text-input-area" onsubmit="event.preventDefault(); sendTextMessage();">
+        <label class="sr-only" for="user-input">Your message</label>
+        <input type="text" id="user-input" placeholder="Type your question…" maxlength="500" autocomplete="off">
+        <button type="submit">Send</button>
+      </form>
+      <p id="privacy-notice">In the real clinic, messages are kept only to answer your enquiry.</p>
+    </section>
+  </div>
+
+  <script>
+    // ----- State -----
+    let conversationState = "normal"; // normal | awaiting_email | awaiting_confirmation
+    let pendingEmail = "";
+    let chatHasStarted = false;
+    let chatEnded = false;
+
+    const $ = (id) => document.getElementById(id);
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const thinkingTime = () => 900 + Math.random() * 700;
+
+    // ----- Widget lifecycle -----
+    function openChat() {
+      $("chat-widget").classList.remove("hidden");
+      $("chat-bubble-icon").classList.add("hidden");
+      if (!chatHasStarted) {
+        chatHasStarted = true;
+        addBubble("Hi! How can I help you today?", "support");
+      }
+      $("user-input").focus();
+    }
+
+    function closeChat() {
+      $("chat-widget").classList.add("hidden");
+      $("chat-bubble-icon").classList.remove("hidden");
+      if (chatEnded) resetChat();
+    }
+
+    function resetChat() {
+      chatEnded = false;
+      chatHasStarted = false;
+      conversationState = "normal";
+      pendingEmail = "";
+      $("chat-body").innerHTML = "";
+      $("menu").classList.remove("hidden");
+      $("text-input-area").classList.remove("hidden");
+    }
+
+    // ----- Bubbles and buttons -----
+    // Replies from the server are trusted HTML (links); anything the patient typed is shown as plain text.
+    function addBubble(content, sender, isHTML = false) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "message-wrapper " + (sender === "me" ? "me" : "support");
+      const label = document.createElement("div");
+      label.className = "sender-label";
+      label.innerText = sender === "me" ? "You" : "Northbank";
+      const bubble = document.createElement("div");
+      bubble.className = sender === "me" ? "user-bubble" : "bot-bubble";
+      if (isHTML) bubble.innerHTML = content;
+      else bubble.innerText = content;
+      wrapper.append(label, bubble);
+      $("chat-body").appendChild(wrapper);
+      scrollDown();
+      return wrapper;
+    }
+
+    function addButtons(options) {
+      const row = document.createElement("div");
+      row.className = "choice-row";
+      for (const [text, onClick] of options) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "submenu-button";
+        btn.innerText = text;
+        btn.onclick = () => {
+          row.querySelectorAll("button").forEach((b) => (b.disabled = true));
+          onClick(text);
+        };
+        row.appendChild(btn);
+      }
+      $("chat-body").appendChild(row);
+      scrollDown();
+    }
+
+    function scrollDown() {
+      $("chat-body").scrollTop = $("chat-body").scrollHeight;
+    }
+
+    async function withTyping(work) {
+      const typing = addBubble("<span></span><span></span><span></span>", "support", true);
+      typing.querySelector(".bot-bubble").classList.add("typing");
+      try {
+        const [result] = await Promise.all([work(), sleep(thinkingTime())]);
+        return result;
+      } finally {
+        typing.remove();
+      }
+    }
+
+    async function post(path, body) {
+      const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok && !data.error) throw new Error("Request failed");
+      return data;
+    }
+
+    function connectionTrouble() {
+      addBubble("Sorry, I couldn't reach the clinic just now. Please try again, or call us on {{ clinic.phone }}.", "support");
+    }
+
+    // ----- "Anything else?" and ending the chat -----
+    async function askAnythingElse() {
+      await withTyping(() => sleep(1200));
+      addBubble("Is there anything else I can help you with?", "support");
+      addButtons([
+        ["Yes, I have another question", (t) => { addBubble(t, "me"); $("menu").classList.remove("hidden"); addBubble("Great, what else can I help with?", "support"); }],
+        ["No, that's everything", (t) => { addBubble(t, "me"); endChat(); }],
+      ]);
+    }
+
+    function endChat() {
+      chatEnded = true;
+      $("menu").classList.add("hidden");
+      $("text-input-area").classList.add("hidden");
+      addBubble("Thanks for getting in touch. Take care!", "support");
+      const msg = document.createElement("div");
+      msg.className = "system-message";
+      msg.innerText = "This chat has ended";
+      $("chat-body").appendChild(msg);
+      scrollDown();
+    }
+
+    // ----- Handing over to a person -----
+    function startHumanHandoff() {
+      conversationState = "awaiting_email";
+      $("menu").classList.add("hidden");
+      addBubble("No problem. What's the best email address to reach you on?", "support");
+      $("user-input").focus();
+    }
+
+    async function confirmEmail() {
+      let data;
+      try {
+        data = await withTyping(() => post("/handoff", { email: pendingEmail }));
+      } catch {
+        conversationState = "awaiting_email";
+        return connectionTrouble();
+      }
+      if (!data.ok) {
+        conversationState = "awaiting_email";
+        addBubble(data.error + " Could you type it again?", "support");
+        return;
+      }
+      conversationState = "normal";
+      addBubble("Thanks! Someone from reception will email you shortly.", "support");
+      askAnythingElse();
+    }
+
+    // ----- Buttons -----
+    async function askQuestion(topic, userText) {
+      $("menu").classList.add("hidden");
+      if (userText) addBubble(userText, "me");
+      let data;
+      try {
+        data = await withTyping(() => post("/ask", { topic }));
+      } catch {
+        $("menu").classList.remove("hidden");
+        return connectionTrouble();
+      }
+      if (data.type === "submenu") {
+        addBubble("Which area is bothering you?", "support");
+        addButtons(data.options.map((o) => [o.charAt(0).toUpperCase() + o.slice(1), (t) => askQuestion(o, t)]));
+        return;
+      }
+      addBubble(data.reply, "support", true);
+      askAnythingElse();
+    }
+
+    // ----- Typing -----
+    async function sendTextMessage() {
+      const input = $("user-input");
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = "";
+      addBubble(text, "me");
+
+      if (conversationState === "awaiting_email" || conversationState === "awaiting_confirmation") {
+        pendingEmail = text;
+        conversationState = "awaiting_confirmation";
+        await withTyping(() => sleep(400));
+        const bubble = addBubble("", "support").querySelector(".bot-bubble");
+        const strong = document.createElement("strong");
+        strong.innerText = text;
+        bubble.append("Just to confirm, that's ", strong, ", is that right?");
+        addButtons([
+          ["Yes, that's correct", (t) => { addBubble(t, "me"); confirmEmail(); }],
+          ["No, let me retype it", (t) => { addBubble(t, "me"); conversationState = "awaiting_email"; addBubble("No problem, go ahead and retype it.", "support"); $("user-input").focus(); }],
+        ]);
+        return;
+      }
+
+      $("menu").classList.add("hidden");
+      let data;
+      try {
+        data = await withTyping(() => post("/ask-text", { message: text }));
+      } catch {
+        $("menu").classList.remove("hidden");
+        return connectionTrouble();
+      }
+      addBubble(data.reply, "support", true);
+      if (data.handoff) {
+        $("menu").classList.remove("hidden");
+        addButtons([["Talk to a person", (t) => { addBubble(t, "me"); startHumanHandoff(); }]]);
+      } else {
+        askAnythingElse();
+      }
+    }
+  </script>
+</body>
+</html>

@@ -2,7 +2,7 @@
 
 A chat assistant for a physiotherapy clinic's website. It answers the questions reception gets asked most, and hands anything else to a person.
 
-**Live demo:** _coming soon_ · for a made-up clinic, Northbank Physio. Nothing you type is stored or sent.
+**Live demo:** https://cian-physio-chatbot.vercel.app · for a made-up clinic, Northbank Physio. Nothing you type is stored or sent.
 
 ## What it does
 

@@ -249,6 +249,11 @@
         $("menu").classList.remove("hidden");
         return connectionTrouble();
       }
+      if (data.urgent) {
+        // Urgent symptoms: the safety message only. No booking buttons, no "anything else?".
+        addBubble(data.reply, "support", true).querySelector(".bot-bubble").classList.add("urgent");
+        return;
+      }
       addBubble(data.reply, "support", true);
       if (data.handoff) {
         $("menu").classList.remove("hidden");

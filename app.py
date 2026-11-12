@@ -6,7 +6,9 @@ a person.
 
 This is a demo for a made-up clinic, Northbank Physio. The answers are plain
 rules, not AI: every reply is predictable, so the clinic stays in control of
-what patients are told.
+what patients are told. Messages that mention urgent symptoms (chest pain,
+breathing difficulty, numbness and so on) get a "call 112/999 or your GP"
+message instead of a normal answer.
 """
 
 import re
@@ -55,6 +57,36 @@ INJURIES = {
     },
 }
 
+# ----- Urgent symptoms -----
+# Some symptoms need a doctor or an ambulance, not a physio appointment. If a
+# typed message mentions one, the bot gives the safety message below and nothing
+# else: no therapist, no booking link. This is a plain list of words and phrases,
+# not a diagnosis. It errs on the side of caution ("no chest pain" still gets the
+# safety message) and it can't catch every way of describing an emergency.
+URGENT_PHRASES = [
+    # chest
+    "chest pain", "chest pains", "pain in my chest", "chest tightness", "tight chest", "tightness in my chest",
+    "heart attack",
+    # breathing
+    "cant breathe", "cannot breathe", "can not breathe", "difficulty breathing", "trouble breathing",
+    "struggling to breathe", "hard to breathe", "short of breath", "shortness of breath", "breathless",
+    # numbness and weakness
+    "numb", "numbness", "cant feel my", "sudden weakness", "lost the use", "cant move my", "paralysed", "paralyzed",
+    # stroke signs
+    "drooping", "droopy face", "slurred", "slurring", "stroke",
+    # bladder and bowel changes with back pain (cauda equina)
+    "bladder", "bowel", "incontinence", "incontinent", "wet myself", "soiled myself",
+    # other emergencies
+    "fainted", "passed out", "collapsed", "unconscious", "seizure", "coughing up blood", "worst headache",
+]
+
+URGENT_REPLY = (
+    "Some of what you've described can be a sign of something serious, so please don't wait for a "
+    "physio appointment. If it's severe or came on suddenly, call "
+    '<a href="tel:112">112</a> or <a href="tel:999">999</a> now. Otherwise, contact your GP '
+    "(or an out-of-hours GP service) today."
+)
+
 NOT_SURE = "Sorry, I'm not quite sure what you mean. Try one of the buttons, or I can pass you to a person."
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -63,8 +95,26 @@ def words(text):
     return set(re.findall(r"[a-z]+", text.lower()))
 
 
+def normalise(text):
+    """Lowercase words separated by single spaces, with apostrophes dropped (so "can't" becomes "cant")."""
+    text = re.sub(r"['\u2019]", "", text.lower())
+    return " " + " ".join(re.findall(r"[a-z]+", text)) + " "
+
+
+def is_urgent(message):
+    """True if the message mentions a symptom that needs a doctor, not a physio. Whole words only."""
+    text = normalise(message)
+    return any(f" {phrase} " in text for phrase in URGENT_PHRASES)
+
+
 def reply_for(message):
-    """The best reply to something a patient typed, or None if no rule matches."""
+    """The best reply to something a patient typed, or None if no rule matches.
+
+    Urgent symptoms are checked first, so "chest pain after football" never gets
+    the sports therapist.
+    """
+    if is_urgent(message):
+        return URGENT_REPLY
     found = words(message)
     for injury in INJURIES.values():
         if found & set(injury["keywords"]):
@@ -96,6 +146,8 @@ def ask():
 @app.post("/ask-text")
 def ask_text():
     message = str((request.get_json(silent=True) or {}).get("message", ""))[:500]
+    if is_urgent(message):
+        return jsonify({"reply": URGENT_REPLY, "handoff": False, "urgent": True})
     reply = reply_for(message)
     if reply is None:
         return jsonify({"reply": NOT_SURE, "handoff": True})

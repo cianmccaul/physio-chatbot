@@ -76,6 +76,8 @@ a { color: var(--teal); }
 .user-bubble { background: var(--teal); color: #fff; border-bottom-right-radius: 4px; }
 .bot-bubble { background: var(--tint); color: var(--ink); border-bottom-left-radius: 4px; }
 .bot-bubble a { font-weight: 600; }
+.bot-bubble.urgent { background: #fdecea; color: #6b1410; border: 1px solid #f1b5ae; }
+.bot-bubble.urgent a { color: #a3170f; }
 
 .typing span {
   display: inline-block; width: 6px; height: 6px; margin-right: 3px; border-radius: 50%;
